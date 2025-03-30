@@ -2,27 +2,25 @@
 
 SkinMachine is a simple diffusion model to generate novel Minecraft skins at random. It consists of a simple UNet diffusion model trained on a dataset of roughly 900'000 minecraft skins.
 
-## Example outputs
+## Results
 
+Despite the relatively simple architecture and brief training period (the denoising model was trained for only 20 epochs, achieving an L1 loss of approximately 0.05), the model is capable of producing visually interesting and reasonably usable skins. The use of a self-attention mechanism in the bottleneck of the U-Net contributes to the overall coherence in color and theme across each generated output. With extended training or the addition of text-based conditioning, the model could show potential for further improvement.
+
+### Loss Graph
+
+### Inference results
+Below are three rendered examples of skins produced with the provided checkpoint of only 20 epochs
+
+![example1](https://github.com/SvenPfiffner/SkinMachine/blob/main/output/render_1.png)
+![example2](https://github.com/SvenPfiffner/SkinMachine/blob/main/output/render_2.png)
+![example3](https://github.com/SvenPfiffner/SkinMachine/blob/main/output/render_3.png)
+
+## About the code
 
 ### Prerequisites
 
 - Build on python 3.10
-- Required Python libraries (see `requirements.txt`)
-
-### Installation
-
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/SvenPfiffner/SkinMachine
-    cd SkinMachine
-    ```
-
-2. Install dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-
+  
 ### Usage
 
 - ```train.ipynb``` contains the training code of the model. Fine tune, extend or adjust to your liking to make your own model
@@ -34,7 +32,7 @@ SkinMachine is a simple diffusion model to generate novel Minecraft skins at ran
 
 **Training**: To train your own version of the model, download the dataset and pass it to the dataloader. Download link for the dataset is given in the *Acknowledgements* section.
 
-**Inference**: If you just want to try inference without training on your own, you can directly use the model checkpoint found under ```checkpoints/``` by running the infer.ipynb script
+**Inference**: If you just want to try inference without training on your own, you can directly use the model checkpoint provided on [HuggingFace🤗](https://huggingface.co/SvenPfiffner/SkinMachine/tree/main)
 
 ## Contributing
 
