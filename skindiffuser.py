@@ -36,34 +36,34 @@ class NoiseScheduler:
 
 class Block(nn.Module):
     
-    def __init__(self, in_ch, out_ch, time_emb_dim, up=False):
+    def __init__(self, in_ch, out_ch, time_emb_dim, up=False, down=False):
         super().__init__()
         self.time_mlp = nn.Linear(time_emb_dim, out_ch)
 
-        if up:
-            self.conv1 = nn.Conv2d(2*in_ch, out_ch, 3, padding=1)
-            self.transform = nn.ConvTranspose2d(out_ch, out_ch, 4, 2, 1)
-        else:
-            self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
-            self.transform = nn.Conv2d(out_ch, out_ch, 4, 2, 1)
+        self.conv1 = nn.Conv2d(in_ch, out_ch, 3, padding=1)
         self.conv2 = nn.Conv2d(out_ch, out_ch, 3, padding=1)
         self.bnorm1 = nn.BatchNorm2d(out_ch)
         self.bnorm2 = nn.BatchNorm2d(out_ch)
         self.relu = nn.ReLU()
 
+        self.residual_conv = nn.Conv2d(in_ch, out_ch, 1) if in_ch != out_ch else nn.Identity()
+
+        self.up = nn.ConvTranspose2d(out_ch, out_ch, 4, 2, 1) if up else None
+        self.down = nn.Conv2d(out_ch, out_ch, 4, 2, 1) if down else None
+
     def forward(self, x, time):
-        # First conv
-        h = self.bnorm1(self.relu(self.conv1(x)))
-        # Time embedding
-        time_emb = self.relu(self.time_mlp(time))
-        # Extend last 2 dimensions
-        time_emb = time_emb[(...,) + (None,) * 2]
-        # Add time channel
-        h = h + time_emb
-        # Second Conv
-        h = self.bnorm2(self.relu(self.conv2(h)))
-        # Down or upsample
-        return self.transform(h)
+        h = self.conv1(x)
+        h = self.bnorm1(h)
+        h += self.time_mlp(time)[:, :, None, None]
+        h = self.relu(h)
+        h = self.bnorm2(self.conv2(h))
+        h = self.relu(h + self.residual_conv(x))
+
+        if self.down:
+            h = self.down(h)
+        elif self.up:
+            h = self.up(h)
+        return h
 
 class SinusoidalPositionEmbedding(nn.Module):
 
@@ -79,6 +79,29 @@ class SinusoidalPositionEmbedding(nn.Module):
         emb = time[: , None] * emb[None, :]
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
+    
+class SelfAttention(nn.Module):
+
+    def __init__(self, channels):
+        super().__init__()
+        self.norm = nn.GroupNorm(1, channels)
+        self.qkv = nn.Conv2d(channels, channels * 3, 1)
+        self.proj = nn.Conv2d(channels, channels, 1)
+
+    def forward(self, x):
+        b, c, h, w = x.shape
+        normed = self.norm(x)
+        qkv = self.qkv(normed)
+        q, k, v = qkv.chunk(3, dim=1)
+
+        q = q.reshape(b, c, -1).transpose(1, 2) # B, HW, C
+        k = k.reshape(b, c, -1) # B, C, HW
+        v = v.reshape(b, c, -1).transpose(1, 2) # B, HW, C
+
+        attn = torch.softmax(q @ k / (c ** 0.5), dim=-1) # B, HW, HW
+        out = attn @ v # B, HW, C
+        out = out.transpose(1, 2).reshape(b, c, h, w) # B, C, H, W
+        return self.proj(out + x)
 
 class SkinUnet(nn.Module):
 
@@ -87,8 +110,9 @@ class SkinUnet(nn.Module):
         image_channels = 3
         down_channels = (64, 128, 256, 512, 1024)
         up_channels = (1024, 512, 256, 128, 64)
+        mid_channels = 1024
         out_dim = 3
-        time_embedding_dim = 32
+        time_embedding_dim = 64
 
         # Time embedding
         self.time_mlp = nn.Sequential(
@@ -101,10 +125,21 @@ class SkinUnet(nn.Module):
         self.conv0 = nn.Conv2d(image_channels, down_channels[0], 3, padding=1)
 
         # Downsample
-        self.downs = nn.ModuleList([Block(down_channels[i], down_channels[i+1], time_embedding_dim) for i in range(len(down_channels) - 1)])
+        self.downs = nn.ModuleList([Block(down_channels[i], down_channels[i+1], time_embedding_dim, down=True) for i in range(len(down_channels) - 1)])
 
         # Upsample
-        self.ups = nn.ModuleList([Block(up_channels[i], up_channels[i+1], time_embedding_dim, up=True) for i in range(len(up_channels) - 1)])
+        self.ups = nn.ModuleList([
+            Block(up_channels[0] + down_channels[-1], up_channels[1], time_embedding_dim, up=True),
+            Block(up_channels[1] + down_channels[-2], up_channels[2], time_embedding_dim, up=True),
+            Block(up_channels[2] + down_channels[-3], up_channels[3], time_embedding_dim, up=True),
+            Block(up_channels[3] + down_channels[-4], up_channels[4], time_embedding_dim, up=True)
+        ])
+
+        # Bottleneck
+        self.bottleneck_block1 = Block(down_channels[-1], mid_channels, time_embedding_dim)
+        self.bottleneck_block2 = Block(mid_channels, up_channels[0], time_embedding_dim)
+        self.selfattention = SelfAttention(mid_channels)
+
 
         self.output = nn.Conv2d(up_channels[-1], out_dim, 1)
 
@@ -120,6 +155,11 @@ class SkinUnet(nn.Module):
         for down in self.downs:
             x = down(x, t)
             residual_inputs.append(x)
+
+        # Bottleneck
+        x = self.bottleneck_block1(x, t)
+        x = self.selfattention(x)
+        x = self.bottleneck_block2(x, t)
 
         for up in self.ups:
             residual_x = residual_inputs.pop()
