@@ -8,6 +8,8 @@ Despite the relatively simple architecture and brief training period (the denois
 
 ### Loss Graph
 
+![loss](https://github.com/SvenPfiffner/SkinMachine/blob/main/output/loss.png)
+
 ### Inference results
 Below are three rendered examples of skins produced with the provided checkpoint of only 20 epochs
 
