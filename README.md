@@ -4,7 +4,6 @@ SkinMachine is a simple diffusion model to generate novel Minecraft skins at ran
 
 ## Example outputs
 
-## Getting Started
 
 ### Prerequisites
 
